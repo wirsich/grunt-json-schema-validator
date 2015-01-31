@@ -10,41 +10,96 @@
 
 module.exports = function(grunt) {
 
-  // Please see the Grunt documentation for more information regarding task
-  // creation: http://gruntjs.com/creating-tasks
-
-  grunt.registerMultiTask('json_schema_validator', 'Grunt plugin to validate and test your "JSON-Schema" files. Supports automated tests, by testing fixtures against schemas.', function() {
-    // Merge task-specific and/or target-specific options with these defaults.
+  grunt.registerMultiTask('json_schema_validator', 'Grunt plugin to validate and test your "JSON-Schema" files. Supports automated tests, by testing fixtures against schemes.', function() {
+    // var path = require('path');
     var options = this.options({
-      punctuation: '.',
-      separator: ', '
+      cwd: '',
+      isFixturesFile: function (filepath) {
+        return filepath.split('/').pop() == 'fixtures.json';
+      },
+      isSchemaFile: function (filepath) {
+        return filepath.split('/').pop() == 'schema.json';
+      }
     });
 
-    // Iterate over all specified file groups.
+    var isFixturesFile = options.isFixturesFile;
+    var isSchemaFile = options.isSchemaFile;
+
+    // var path_src = path.resolve('node_modules/grunt-json-schema-validator/src/');
+
+    var removeCWD = function (filepath, cwd) {
+      cwd = cwd || options.cwd;
+      return filepath.split(cwd).join('');
+    };
+
+    var jjv = require('jjv');
+    var validator_env = jjv();
+
+    var jjve = require('jjve');
+    var jjv_error_handler = jjve(validator_env);
+
+    var renderValidationError = function (schema, data, result) {
+      grunt.log.error('validation of "'+ schema.name+ '" failed.');
+      var errors = jjv_error_handler(schema, data, result);
+
+
+      var i = 0, l = errors.length;
+      for (; i < l; ++i) {
+        grunt.log.warn(errors[i].code+': '+errors[i].message);
+        console.log(errors[i].data);
+      }
+
+      grunt.fail.fatal('Validation failed: fix the issues above to continue.');
+    };
+
+    var validateSchemaAgainstFixture = function (schema) {
+      validator_env.addSchema(schema.name, schema.schema);
+      var result = validator_env.validate(schema.name, schema.fixtures);
+
+      if (result) {
+        renderValidationError(schema.schema, schema.fixtures, result);
+        return false;
+      }
+      return true;
+    };
+
+    var testSchema = function (schema) {
+      schema = schema || {fixtures: false, schema: false};
+      if (schema.schema && schema.fixtures) {
+        return validateSchemaAgainstFixture(schema);
+      }
+
+      grunt.log.warn('Skip test for ', schema.schema, schema.fixtures);
+    };
+
+    var dest, schema_name;
+    var schemes = {};
     this.files.forEach(function(f) {
-      // Concat specified files.
-      var src = f.src.filter(function(filepath) {
-        // Warn on and remove invalid source files (if nonull was set).
-        if (!grunt.file.exists(filepath)) {
-          grunt.log.warn('Source file "' + filepath + '" not found.');
-          return false;
-        } else {
-          return true;
+      dest = f.dest;
+      f.src.forEach(function (filepath) {
+        if (grunt.file.isDir(filepath)) {
+          schema_name = removeCWD(filepath);
+          schemes[schema_name] = schemes[schema_name] || {};
+          schemes[schema_name].name = schema_name;
         }
-      }).map(function(filepath) {
-        // Read file source.
-        return grunt.file.read(filepath);
-      }).join(grunt.util.normalizelf(options.separator));
 
-      // Handle options.
-      src += options.punctuation;
-
-      // Write the destination file.
-      grunt.file.write(f.dest, src);
-
-      // Print a success message.
-      grunt.log.writeln('File "' + f.dest + '" created.');
+        if (grunt.file.isFile(filepath)) {
+          if (isFixturesFile(filepath)) {
+            schemes[schema_name].fixtures = grunt.file.readJSON(filepath);
+          }
+          if (isSchemaFile(filepath)) {
+            schemes[schema_name].schema = grunt.file.readJSON(filepath);
+          }
+        }
+      });
     });
-  });
 
+    // iterate schemes
+    for (var schema in schemes) {
+      testSchema(schemes[schema])
+    }
+
+    grunt.log.ok('validation done.');
+    // @TODO coverage report
+  });
 };
